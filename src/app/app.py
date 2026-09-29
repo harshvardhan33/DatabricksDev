@@ -35,6 +35,23 @@ FEATURE_COLUMNS = [
     "longitude",
     "property_type",
 ]
+# Must match the model's logged input signature exactly (double/integer/long) — the
+# model itself does NOT relax int64<->float64, so a widget or uploaded file that
+# happens to produce ints for a "double" column fails schema enforcement.
+FEATURE_DTYPES = {
+    "area": "float64",
+    "bedroom_num": "int32",
+    "bathroom_num": "int32",
+    "balcony_num": "int32",
+    "total_floors": "int32",
+    "age": "int32",
+    "bed_bath_ratio": "float64",
+    "furnished_encoded": "int32",
+    "locality_listing_count": "int64",
+    "distance_from_center_km": "float64",
+    "latitude": "float64",
+    "longitude": "float64",
+}
 RAW_INPUT_COLUMNS = [
     "area",
     "bedroom_num",
@@ -98,7 +115,8 @@ def engineer_features(raw: pd.DataFrame, locality_lookup: pd.DataFrame) -> pd.Da
     df["distance_from_center_km"] = df.apply(
         lambda r: round(haversine_km(float(r["latitude"]), float(r["longitude"])), 2), axis=1
     )
-    return df[FEATURE_COLUMNS]
+    df = df[FEATURE_COLUMNS].astype(FEATURE_DTYPES)
+    return df
 
 
 def read_uploaded_file(uploaded) -> pd.DataFrame:
