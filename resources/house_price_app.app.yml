@@ -1,0 +1,14 @@
+# Streamlit app: predicts Mumbai house prices (single record or batch upload)
+# using the champion model registered by house_price_ml_job.
+
+resources:
+  apps:
+    house_price_app:
+      name: house-price-predictor-${bundle.target}
+      description: "Predict Mumbai house prices from listing features (single record or batch upload) using the champion model."
+      source_code_path: ../src/app
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: f0048eb0460c1f30
+            permission: CAN_USE
