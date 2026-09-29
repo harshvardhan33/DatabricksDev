@@ -1,0 +1,135 @@
+# End-to-end house price ML job: raw -> bronze -> silver -> gold (feature table)
+# -> EDA -> train 5 models -> select & register best -> validate -> promote -> deploy.
+#
+# deploy_endpoint defaults to "false": every task through model registration and
+# champion/challenger promotion always runs, but the final deploy_model task will
+# only provision a (billable) serving endpoint when explicitly re-run with
+# deploy_endpoint=true.
+
+resources:
+  jobs:
+    house_price_ml_job:
+      name: house_price_ml_job
+
+      parameters:
+        - name: catalog
+          default: ${var.catalog}
+        - name: schema
+          default: ${var.schema}
+        - name: experiment_path
+          default: ${workspace.file_path}/mlflow_experiment
+        - name: deploy_endpoint
+          default: "false"
+
+      tasks:
+        - task_key: raw_ingest
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/raw_ingest.py
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+
+        - task_key: bronze
+          depends_on:
+            - task_key: raw_ingest
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/bronze.py
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+
+        - task_key: silver
+          depends_on:
+            - task_key: bronze
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/silver.py
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+
+        - task_key: gold
+          depends_on:
+            - task_key: silver
+          environment_key: fe_env
+          spark_python_task:
+            python_file: ../src/tasks/gold.py
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+
+        - task_key: eda
+          depends_on:
+            - task_key: silver
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/tasks/eda.py
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+
+        - task_key: train_models
+          depends_on:
+            - task_key: gold
+          environment_key: ml_env
+          spark_python_task:
+            python_file: ../src/tasks/train_models.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${var.schema}"
+              - "--experiment-path"
+              - "{{job.parameters.experiment_path}}"
+
+        - task_key: select_and_register
+          depends_on:
+            - task_key: train_models
+          environment_key: mlflow_env
+          spark_python_task:
+            python_file: ../src/tasks/select_and_register.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${var.schema}"
+              - "--experiment-path"
+              - "{{job.parameters.experiment_path}}"
+
+        - task_key: validate_and_promote
+          depends_on:
+            - task_key: select_and_register
+          # Must match train_models' environment exactly — unpickling a scikit-learn model
+          # trained on a different sklearn version can fail (e.g. GradientBoosting's Cython loss).
+          environment_key: ml_env
+          spark_python_task:
+            python_file: ../src/tasks/validate_and_promote.py
+            parameters: ["--catalog", "${var.catalog}", "--schema", "${var.schema}"]
+
+        - task_key: deploy_model
+          depends_on:
+            - task_key: validate_and_promote
+          environment_key: mlflow_env
+          spark_python_task:
+            python_file: ../src/tasks/deploy_model.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${var.schema}"
+              - "--deploy-endpoint"
+              - "{{job.parameters.deploy_endpoint}}"
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "4"
+        - environment_key: fe_env
+          spec:
+            client: "4"
+            dependencies:
+              - databricks-feature-engineering>=0.7.0
+        - environment_key: ml_env
+          spec:
+            client: "4"
+            dependencies:
+              - mlflow==3.1.0
+              - scikit-learn==1.5.2
+              - xgboost==2.1.3
+        - environment_key: mlflow_env
+          spec:
+            client: "4"
+            dependencies:
+              - mlflow==3.1.0
